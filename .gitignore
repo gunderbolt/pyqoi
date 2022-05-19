@@ -3,4 +3,6 @@
 __pycache__/
 *.pyc
 
+# ignore test input/output test images
+*.png
 *.qoi
