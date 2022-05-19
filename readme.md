@@ -61,3 +61,7 @@ Return value is the 3 or 4 channel pixel data.
 
 - Create functions that work with streaming pixel/qoi data.
 - Create implementation using [Construct](https://construct.readthedocs.io/en/latest/intro.html).
+
+## License
+
+This project is licensed under the MIT License.
