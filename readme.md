@@ -29,7 +29,7 @@ def qoi_encode(
 
 `data` is the image data. For `channels==CHANNELS_RGBA` (or 4), each pixel is broken down into its red, green, blue, and alpha values (each 0-255, 1 byte). `channels==CHANNELS_RGB` does not include alpha values and internally uses 255 for them.
 
-`colorspace` is only included in the qoi header.
+`colorspace` is only included in the qoi header; it doesn't affect any other part of the encode process.
 
 Return value is the data exactly as it should appear in the resulting qoi file.
 
@@ -51,16 +51,13 @@ with open('test.qoi', 'rb') as f:
 Return value is the 3 or 4 channel pixel data.
 
 
-## Procedural Implementation Issues
-
-- `qoi_encode` assumes four channels.
-- `qoi_encode` doesn't check width, height, channels, colorspace for invalid entries.
-
-
 ## Future / Ideas
 
+- Update interface and turn it into a PyPi package.
+- Create Sphinx documentation.
 - Create functions that work with streaming pixel/qoi data.
-- Create implementation using [Construct](https://construct.readthedocs.io/en/latest/intro.html).
+- Create implementation using [Construct](https://construct.readthedocs.io/en/latest/intro.html) (perhaps this would be in a separate repos).
+
 
 ## License
 
