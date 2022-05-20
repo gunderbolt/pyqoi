@@ -49,11 +49,7 @@ def qoi_encode(
     data_iter = iter(data)
 
     output = []
-    output.append(b'qoif')
-    output.append(pack('>I', width))
-    output.append(pack('>I', height))
-    output.append(pack('>B', channels))
-    output.append(pack('>B', colorspace))
+    output.append(pack('>4sIIBB', b'qoif', width, height, channels, colorspace))
 
     while pixel_index < TOTAL_PIXELS:
         prev_pixel = pixel
@@ -132,8 +128,6 @@ def qoi_decode(data: bytes) -> bytes:
         raise ValueError(f'Encoded channels invalid! ({channels})')
 
     data_iter = iter(data[14:-8])  # The slice excludes the header and footer
-    processed_pixels = 0
-    TOTAL_PIXELS = width * height
     indexed_pixels = [(0, 0, 0, 0)] * 64
     pixel = (0, 0, 0, 255)
     for tag in data_iter:
@@ -181,13 +175,11 @@ def qoi_decode(data: bytes) -> bytes:
             # run_len_biased has bias of -1.
             # The last pixel will be stored after block.
             output.extend(repeat(pixel, run_len_biased))
-            processed_pixels += run_len_biased
 
         output.append(pixel)
         indexed_pixels[qoi_index_position(*pixel)] = pixel
-        processed_pixels += 1
 
-    if channels == 4:
+    if channels == CHANNELS_RGBA:
         return bytes(chain.from_iterable(output))
     # 3 Channels: take every value except the alpha.
     return bytes(compress(chain.from_iterable(output), cycle((1, 1, 1, 0))))
