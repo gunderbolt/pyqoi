@@ -1,5 +1,6 @@
 from itertools import repeat, chain, compress, cycle
 from struct import pack, unpack_from
+from typing import Generator
 import warnings
 
 
@@ -23,17 +24,29 @@ s8_arith = lambda x: ((128+x) % 256) - 128
 u8_arith = lambda x: x % 256
 
 
+def pixels(data: bytes, channels: int) -> Generator[tuple[int, int, int, int], None, None]:
+    data_iter = iter(data)
+    try:
+        while True:
+            yield (
+                next(data_iter),
+                next(data_iter),
+                next(data_iter),
+                255 if channels==CHANNELS_RGB else next(data_iter)
+            )
+    except StopIteration:
+        pass
+
+
 def qoi_encode(
         width: int,
         height: int,
         data: bytes,
         channels=CHANNELS_RGB,
         colorspace=COLORSPACE_SRGB_WITH_LINEAR_ALPHA) -> bytes:
-    pixel = (0, 0, 0, 255)
-    pixel_index = 0
     TOTAL_PIXELS = width*height
+    prev_pixel = (0, 0, 0, 255)
     indexed_pixels = [(0, 0, 0, 0)] * 64
-    final_pixel = False
 
     if width <= 0:
         raise ValueError('width must be larger than 0.')
@@ -46,68 +59,56 @@ def qoi_encode(
     if len(data) < (TOTAL_PIXELS * channels):
         raise ValueError(f'data is too short. Exp: {TOTAL_PIXELS*channels}, Act: {len(data)}')
 
-    data_iter = iter(data)
-
     output = []
     output.append(pack('>4sIIBB', b'qoif', width, height, channels, colorspace))
 
-    while pixel_index < TOTAL_PIXELS:
-        prev_pixel = pixel
-        # QOI_OP_RUN
-        try:
-            run_count = -1
-            while pixel == prev_pixel:
-                run_count += 1
-                pixel = (
-                    next(data_iter),
-                    next(data_iter),
-                    next(data_iter),
-                    255 if channels==CHANNELS_RGB else next(data_iter),
-                )
-                pixel_index += 1
-        except StopIteration:
-            final_pixel = True
-        if run_count > 0:
-            while run_count > 62:
+    run_count = 0
+    for pixel in pixels(data, channels):
+        if pixel == prev_pixel:
+            run_count += 1
+            if run_count == 62:
                 output.append(pack('>B', TAG_QOI_OP_RUN | 61))  # 62 bias -1 => 61
-                run_count -= 62
-            output.append(pack('>B', TAG_QOI_OP_RUN | (run_count-1)))  # bias -1
-            if final_pixel:
-                break
-            # Continue to the next OP check because we have updated pixel
+                run_count = 0
+        else:
+            if run_count > 0:
+                output.append(pack('>B', TAG_QOI_OP_RUN | (run_count-1)))  # bias -1
+                run_count = 0
+                # Continue to the next OP check because we have updated pixel
 
-        # QOI_OP_INDEX
-        prev_index = qoi_index_position(*pixel)
-        if pixel == indexed_pixels[prev_index]:
-            output.append(pack('>B', TAG_QOI_OP_INDEX | prev_index))
-            continue
+            prev_index = qoi_index_position(*pixel)
+            if pixel == indexed_pixels[prev_index]:
+                # QOI_OP_INDEX
+                output.append(pack('>B', TAG_QOI_OP_INDEX | prev_index))
+            elif prev_pixel[3] != pixel[3]:
+                # QOI_OP_RGBA - it is the only option left if alpha is different
+                output.append(pack('>BBBBB', TAG_QOI_OP_RGBA, *pixel))
+                indexed_pixels[prev_index] = pixel
+            else:
+                dr = s8_arith(pixel[0] - prev_pixel[0])
+                dg = s8_arith(pixel[1] - prev_pixel[1])
+                db = s8_arith(pixel[2] - prev_pixel[2])
 
-        # QOI_OP_RGBA - it is the only option left if alpha is different
-        if prev_pixel[3] != pixel[3]:
-            output.append(pack('>BBBBB', TAG_QOI_OP_RGBA, *pixel))
-            indexed_pixels[prev_index] = pixel
-            continue
+                dr_dg = s8_arith(dr - dg)
+                db_dg = s8_arith(db - dg)
 
-        # QOI_OP_DIFF
-        dr = s8_arith(pixel[0] - prev_pixel[0])
-        dg = s8_arith(pixel[1] - prev_pixel[1])
-        db = s8_arith(pixel[2] - prev_pixel[2])
-        if ((-2<=dr<=1) and (-2<=dg<=1) and (-2<=db<=1)):
-            output.append(pack('>B', TAG_QOI_OP_DIFF | (dr+2)<<4 | (dg+2)<<2 | (db+2)))
-            indexed_pixels[prev_index] = pixel
-            continue
+                if ((-2<=dr<=1) and (-2<=dg<=1) and (-2<=db<=1)):
+                    # QOI_OP_DIFF
+                    output.append(pack('>B', TAG_QOI_OP_DIFF | (dr+2)<<4 | (dg+2)<<2 | (db+2)))
+                    indexed_pixels[prev_index] = pixel
+                elif ((-32<=dg<=31) and (-8<=dr_dg<=7) and (-8<=db_dg<=7)):
+                    # QOI_OP_LUMA
+                    output.append(pack('>BB', TAG_QOI_OP_LUMA | dg+32, (dr_dg+8)<<4 | (db_dg+8)))
+                    indexed_pixels[prev_index] = pixel
+                else:
+                    # QOI_OP_RGB
+                    output.append(pack('>BBBB', TAG_QOI_OP_RGB, *pixel[:3]))
+                    indexed_pixels[prev_index] = pixel
 
-        # QOI_OP_LUMA
-        dr_dg = s8_arith(dr - dg)
-        db_dg = s8_arith(db - dg)
-        if ((-32<=dg<=31) and (-8<=dr_dg<=7) and (-8<=db_dg<=7)):
-            output.append(pack('>BB', TAG_QOI_OP_LUMA | dg+32, (dr_dg+8)<<4 | (db_dg+8)))
-            indexed_pixels[prev_index] = pixel
-            continue
+            prev_pixel = pixel
 
-        # QOI_OP_RGB
-        output.append(pack('>BBBB', TAG_QOI_OP_RGB, *pixel[:3]))
-        indexed_pixels[prev_index] = pixel
+    # Check the run_count one more time in case it was the final set of pixels
+    if run_count > 0:
+        output.append(pack('>B', TAG_QOI_OP_RUN | (run_count-1)))  # bias -1
 
     output.append(b'\x00'*7 + b'\x01')
 
@@ -169,7 +170,7 @@ def qoi_decode(data: bytes) -> bytes:
                 u8_arith(prev_pixel[2] + db_dg + dg),
                 prev_pixel[3],
             )
-        elif (tag & TAG_QOI_2B_MASK) == TAG_QOI_OP_RUN:
+        else:  # TAG_QOI_OP_RUN: it must be this option; no need to check
             pixel = prev_pixel
             run_len_biased = tag & 0x3f
             # run_len_biased has bias of -1.
